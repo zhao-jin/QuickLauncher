@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useConfig } from "@/store/useConfig";
-import { launchItem } from "@/lib/ipc";
+import { launchItem, revealInExplorer } from "@/lib/ipc";
 import { emptyItem, type LaunchItem } from "@/types/config";
 import { keyFromEvent, makeKeyMatrix, TOP_BAR_KEYS } from "@/lib/hotkey";
 import { useItemIcon } from "@/lib/useIcon";
@@ -219,10 +219,23 @@ export default function App() {
     const hasClip = !!clipboard;
 
     if (hasItem) {
+      // "打开文件位置" 对 URL 不适用（禁用）
+      const isUrl = /^https?:\/\//i.test(item!.target);
       return [
         {
           label: "启动",
           onClick: () => item && run(item),
+        },
+        {
+          label: "打开文件位置",
+          disabled: isUrl || !item!.target,
+          onClick: async () => {
+            try {
+              await revealInExplorer(item!.target);
+            } catch (e) {
+              alert(`无法打开文件位置：${e}`);
+            }
+          },
         },
         { separator: true, label: "" },
         {

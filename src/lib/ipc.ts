@@ -17,6 +17,11 @@ export async function launchItem(item: LaunchItem): Promise<void> {
   });
 }
 
+/** 在资源管理器中定位到该 target（文件用 /select 高亮，目录直接打开，URL 报错） */
+export async function revealInExplorer(target: string): Promise<void> {
+  await invoke("reveal_in_explorer", { target });
+}
+
 /** 加载配置 JSON 字符串（空串表示不存在，前端用默认配置并触发首次写入） */
 export async function loadConfigRaw(): Promise<string> {
   return await invoke<string>("load_config");

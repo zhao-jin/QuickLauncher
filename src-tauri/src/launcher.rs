@@ -164,12 +164,133 @@ mod win {
         }
         Ok(())
     }
+
+    /// 把一个路径用 `explorer /select,<path>` 高亮显示（若是目录则直接打开）。
+    pub fn reveal(target: &str) -> Result<(), String> {
+        // 1) 解析到绝对路径
+        let abs = resolve_to_absolute(target)?;
+        let p = Path::new(&abs);
+
+        // 2) 如果是目录 → 直接 explorer <dir>
+        //    如果是文件 → explorer /select,<file>
+        //    如果不存在（可能是 UNC 或无权限）→ 兜底 explorer <父目录>
+        let (verb_args_string, dir_opt) = if p.is_dir() {
+            (String::new(), Some(abs.clone()))
+        } else if p.exists() {
+            (format!("/select,\"{}\"", abs), None)
+        } else {
+            // 不存在：尝试打开父目录
+            match p.parent() {
+                Some(parent) if parent.as_os_str().len() > 0 && parent.is_dir() => (
+                    String::new(),
+                    Some(parent.to_string_lossy().to_string()),
+                ),
+                _ => return Err(format!("目标不存在：{abs}")),
+            }
+        };
+
+        // 用 ShellExecuteExW 启动 explorer
+        let file_w = to_wide("explorer.exe");
+        let (params_w, dir_w, has_params, has_dir);
+        if !verb_args_string.is_empty() {
+            params_w = to_wide(&verb_args_string);
+            dir_w = Vec::<u16>::new();
+            has_params = true;
+            has_dir = false;
+        } else if let Some(d) = &dir_opt {
+            // explorer <dir> 等价于把 dir 作为参数
+            params_w = to_wide(&format!("\"{}\"", d));
+            dir_w = Vec::<u16>::new();
+            has_params = true;
+            has_dir = false;
+        } else {
+            params_w = Vec::<u16>::new();
+            dir_w = Vec::<u16>::new();
+            has_params = false;
+            has_dir = false;
+        }
+
+        let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+        info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+        info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+        info.lpVerb = std::ptr::null();
+        info.lpFile = file_w.as_ptr();
+        info.lpParameters = if has_params {
+            params_w.as_ptr()
+        } else {
+            std::ptr::null()
+        };
+        info.lpDirectory = if has_dir {
+            dir_w.as_ptr()
+        } else {
+            std::ptr::null()
+        };
+        info.nShow = SW_SHOWNORMAL as i32;
+
+        let ok = unsafe { ShellExecuteExW(&mut info) };
+        if ok == 0 {
+            let err = std::io::Error::last_os_error();
+            return Err(format!("启动 explorer 失败: {err}"));
+        }
+        Ok(())
+    }
+
+    /// 把 target 解析为绝对路径：
+    ///   - 绝对路径 → 原样返回
+    ///   - 相对路径（含分隔符） → 相对 cwd 拼接
+    ///   - 裸命令名（如 "python"） → 用 PATH 查找（逐个目录 + PATHEXT 后缀）
+    fn resolve_to_absolute(target: &str) -> Result<String, String> {
+        let t = target.trim();
+        let p = Path::new(t);
+        if p.is_absolute() {
+            return Ok(t.to_string());
+        }
+        if t.contains(std::path::MAIN_SEPARATOR) || t.contains('/') {
+            // 相对路径
+            return Ok(std::env::current_dir()
+                .map_err(|e| format!("cwd failed: {e}"))?
+                .join(p)
+                .to_string_lossy()
+                .to_string());
+        }
+
+        // 裸命令：查 PATH
+        let path_env = std::env::var_os("PATH").ok_or("PATH 未设置")?;
+        let exts_env = std::env::var_os("PATHEXT").unwrap_or_else(|| {
+            std::ffi::OsString::from(".EXE;.BAT;.CMD;.COM")
+        });
+        let exts: Vec<String> = exts_env
+            .to_string_lossy()
+            .split(';')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        for dir in std::env::split_paths(&path_env) {
+            // 先尝试原名（若用户带了扩展名）
+            let direct = dir.join(t);
+            if direct.is_file() {
+                return Ok(direct.to_string_lossy().to_string());
+            }
+            // 再尝试附加 PATHEXT 各种后缀
+            for ext in &exts {
+                let cand = dir.join(format!("{t}{ext}"));
+                if cand.is_file() {
+                    return Ok(cand.to_string_lossy().to_string());
+                }
+            }
+        }
+        Err(format!("在 PATH 中找不到命令：{t}"))
+    }
 }
 
 #[cfg(not(windows))]
 mod win {
     use super::LaunchItem;
     pub fn execute(_item: &LaunchItem) -> Result<(), String> {
+        Err("Only Windows is supported".into())
+    }
+    pub fn reveal(_target: &str) -> Result<(), String> {
         Err("Only Windows is supported".into())
     }
 }
@@ -182,4 +303,33 @@ pub fn launch_item(item: LaunchItem) -> Result<(), String> {
         item.name, item.target, item.arguments, item.start_in, item.run, item.run_as_admin
     );
     win::execute(&item)
+}
+
+/// Tauri command：在资源管理器中定位到该 target。
+///
+/// 规则：
+///   - URL（http/https）→ 报错让前端禁用
+///   - 绝对文件路径（exe/bat/任意文件）→ `explorer /select,<path>` 高亮选中
+///   - 目录 → 直接 `explorer <path>`（打开该目录）
+///   - 裸命令名（不含路径分隔符）→ 先 `where <cmd>` 找绝对路径再 select；找不到报错
+///   - 相对路径 → 按当前 cwd 拼绝对再处理
+#[tauri::command]
+pub fn reveal_in_explorer(target: String) -> Result<(), String> {
+    let t = target.trim();
+    if t.is_empty() {
+        return Err("目标为空".into());
+    }
+    if t.starts_with("http://") || t.starts_with("https://") || t.starts_with("file://") {
+        return Err("URL 类命令无法定位到文件夹".into());
+    }
+
+    #[cfg(windows)]
+    {
+        win::reveal(t)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = t;
+        Err("only on Windows".into())
+    }
 }

@@ -227,6 +227,7 @@ pub fn run() {
         .manage(HotkeyState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             launcher::launch_item,
+            launcher::reveal_in_explorer,
             config_store::load_config,
             config_store::save_config,
             config_store::portable_dir_path,
