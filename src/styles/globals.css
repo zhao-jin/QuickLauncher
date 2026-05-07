@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --panel-alpha: 0.35;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: #ffffff;
+  font-family: theme("fontFamily.sans");
+  user-select: none;
+  overflow: hidden;
+}
+
+/* 主面板：Mica 底座 + 暗色遮罩 */
+.panel {
+  background: rgba(22, 23, 26, var(--panel-alpha));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.45);
+}
+
+.drag-region { -webkit-app-region: drag; app-region: drag; }
+.no-drag { -webkit-app-region: no-drag; app-region: no-drag; }
+
+/* =========================================================
+   Cell：凸起玻璃质感（无边框）
+   ========================================================= */
+.cell {
+  position: relative;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 180ms ease, background 180ms ease;
+  will-change: transform, box-shadow;
+}
+
+/* 有内容的格子：微凸贴片 */
+.cell.filled {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.045) 55%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.25),
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 3px 8px rgba(0, 0, 0, 0.22);
+}
+
+.cell.filled:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.2) 0%,
+    rgba(255, 255, 255, 0.09) 55%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    0 4px 8px rgba(0, 0, 0, 0.4),
+    0 10px 24px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(120, 170, 255, 0.35),
+    0 0 12px rgba(120, 170, 255, 0.25);
+  transform: translateY(-3px) scale(1.02);
+}
+
+.cell.filled:active {
+  transition-duration: 80ms;
+  transform: translateY(0) scale(0.96);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.35),
+    0 1px 2px rgba(0, 0, 0, 0.3);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+}
+
+/* 空格子：默认完全透明，只在 hover 时浮现 */
+.cell.empty {
+  background: transparent;
+  box-shadow: none;
+}
+
+.cell.empty:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+  transform: translateY(-1px);
+}
+
+.cell.empty:active {
+  transition-duration: 80ms;
+  transform: scale(0.95);
+}
+
+/* =========================================================
+   拖拽状态：正在拖 / 目标格子
+   ========================================================= */
+.cell.dragging {
+  opacity: 0.4;
+  transform: scale(0.96);
+}
+
+.cell.drop-target {
+  box-shadow:
+    inset 0 0 0 2px rgba(120, 170, 255, 0.9),
+    0 0 16px rgba(120, 170, 255, 0.45);
+  background: linear-gradient(
+    180deg,
+    rgba(120, 170, 255, 0.2) 0%,
+    rgba(120, 170, 255, 0.08) 100%
+  ) !important;
+  transform: translateY(-2px);
+}

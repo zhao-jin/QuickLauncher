@@ -1,0 +1,30 @@
+# ===== Node / Vite =====
+node_modules/
+dist/
+dist-ssr/
+.vite/
+
+# ===== Rust / Tauri =====
+src-tauri/target/
+src-tauri/gen/
+
+# ===== 编辑器 / 系统 =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+.env
+.env.local
+.env.*.local
+
+# ===== 打包产物（体积大，不入仓；通过 npm run release 重新生成）=====
+dist-portable/
+
+# ===== 运行时数据 =====
+# 工程根的 config.json 是 dev 运行时被写入的个人数据
+/config.json
+# 顶层 icons 缓存目录（dev 运行时生成）
+/icons/
+
+# scripts/default-config.json 是默认配置模板，**保留入仓**（勿忽略）
