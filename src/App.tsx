@@ -584,7 +584,7 @@ function Cell({
       title={
         empty
           ? `${hotkey} · 左键添加 / 拖入文件 / 右键菜单`
-          : `${hotkey} · ${item!.name}\n${item!.target}\n左键启动 · 右键菜单 · 拖拽移动`
+          : buildTooltip(hotkey, item!)
       }
     >
       {/* hotkey 标签：更淡、更小、更边缘 */}
@@ -644,4 +644,33 @@ function baseName(path: string): string {
   const sep = trimmed.lastIndexOf("\\") !== -1 ? "\\" : "/";
   const last = trimmed.split(sep).pop() || trimmed;
   return last.replace(/\.[^.]+$/, "");
+}
+
+/** 鼠标悬浮 tooltip：用 \n 换行展示命令完整属性 */
+function buildTooltip(hotkey: string, item: LaunchItem): string {
+  const lines: string[] = [];
+  lines.push(`[${hotkey}] ${item.name || "(未命名)"}`);
+  lines.push("");
+  lines.push(`Target:    ${item.target || "(空)"}`);
+  if (item.arguments) lines.push(`Arguments: ${item.arguments}`);
+  if (item.startIn) lines.push(`Start in:  ${item.startIn}`);
+  // Run mode 仅在非默认时显示
+  if (item.run && item.run !== "normal") {
+    const runLabel: Record<string, string> = {
+      minimized: "Minimized",
+      maximized: "Maximized",
+      hidden: "Hidden (后台)",
+    };
+    lines.push(`Run:       ${runLabel[item.run] ?? item.run}`);
+  }
+  if (item.runAsAdmin) lines.push(`Run as administrator`);
+  // 图标信息（resource 模式带 index 才显示）
+  if (item.iconMode === "resource" && item.iconPath) {
+    lines.push(`Icon:      ${item.iconPath} #${item.iconIndex || 0}`);
+  } else if (item.iconMode === "custom" && item.iconPath) {
+    lines.push(`Icon:      ${item.iconPath}`);
+  }
+  lines.push("");
+  lines.push("左键启动 · 右键菜单 · 拖拽移动");
+  return lines.join("\n");
 }
