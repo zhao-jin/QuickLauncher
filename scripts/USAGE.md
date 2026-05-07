@@ -8,13 +8,15 @@
 
 ```
 QuickLauncher/
-├── QuickLauncher.exe   ← 主程序，双击即可运行
-├── config.json         ← 配置文件（首次运行自动生成）
-└── icons/              ← 图标缓存（自动生成）
+├── QuickLauncher.exe          ← 主程序，双击即可运行
+├── config.json                ← 配置文件（首次运行自动生成）
+├── icons/                     ← 图标缓存（自动生成）
+├── install-startmenu.ps1      ← 把 QuickLauncher 注册到 Windows 开始菜单
+└── uninstall-startmenu.ps1    ← 从开始菜单移除
 ```
 
 > **Portable 绿色模式**：所有数据都存在本文件夹内，不写注册表。
-> 删除整个文件夹即可卸载。
+> 删除整个文件夹即可卸载（但请先跑 uninstall-startmenu.ps1 清掉快捷方式）。
 
 ---
 
@@ -72,13 +74,30 @@ QuickLauncher/
 
 ---
 
+## 安装到 Windows 开始菜单（可选）
+
+虽然是 portable 程序，也可以让它出现在 **开始菜单 / 任务栏搜索** 里：
+
+1. 在本文件夹内**右键** `install-startmenu.ps1` → **使用 PowerShell 运行**
+   （或在 PowerShell 里 `cd` 到本目录后执行：`.\install-startmenu.ps1`）
+2. 之后按 Win 键打开开始菜单，输入 `Quick Launcher` 即可看到
+3. 在搜索结果上 **右键 → 固定到"开始"屏幕 / 任务栏** 也可以
+
+**移除**：右键 `uninstall-startmenu.ps1` → 使用 PowerShell 运行。
+
+> 该脚本只创建一个 `.lnk` 快捷方式（指向当前 exe 路径），**不写注册表，不需要管理员权限**。
+
+---
+
 ## 常见问题
 
 ### Q：快捷键 `Ctrl+~` 无响应？
 A：可能被其他程序占用。打开设置改为其他组合（比如 `Ctrl+Alt+Space`）。
 
 ### Q：怎么开机自启？
-A：在 Windows `shell:startup` 目录里放 `QuickLauncher.exe` 的快捷方式即可。
+A：两种方式任选——
+- 跑 `install-startmenu.ps1` 后再把开始菜单里的 QuickLauncher 拖到 `shell:startup` 文件夹
+- 或直接在 `shell:startup` 里放 `QuickLauncher.exe` 的快捷方式
 
 ### Q：支持 Windows 7/8 吗？
 A：**不支持**。要求 Windows 10 1809 或以上，需要 WebView2 Runtime（Windows 11 内置；Windows 10 会在首次运行时自动安装）。

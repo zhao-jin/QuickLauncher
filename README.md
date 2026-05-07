@@ -63,6 +63,20 @@ npm install
 npm run tauri:dev
 ```
 
+### 让它出现在 Windows 开始菜单（可选）
+
+Portable 包内附带一个 PowerShell 脚本，**不需要管理员权限**：
+
+```powershell
+# 在 portable 包目录下右键 install-startmenu.ps1 → 用 PowerShell 运行
+# 或：
+.\install-startmenu.ps1
+```
+
+之后按 Win 键搜 `Quick Launcher` 就能找到，可右键固定到开始屏幕/任务栏。
+
+移除：`.\uninstall-startmenu.ps1`
+
 ### 交互速查
 
 | 操作 | 效果 |
@@ -136,11 +150,13 @@ scripts/
 ## 常用命令
 
 ```bash
-npm run tauri:dev       # 开发模式
-npm run tauri:build     # 编译 release
-npm run convert:mal     # .mal → default-config.json
-npm run pack:portable   # 打 portable zip（依赖已构建的 exe）
-npm run release         # build + pack 一条龙
+npm run tauri:dev          # 开发模式
+npm run tauri:build        # 编译 release
+npm run convert:mal        # .mal → default-config.json
+npm run pack:portable      # 打 portable zip（依赖已构建的 exe）
+npm run release            # build + pack 一条龙
+npm run install:startmenu  # 把当前 portable exe 注册到 Windows 开始菜单
+npm run uninstall:startmenu
 ```
 
 ## License

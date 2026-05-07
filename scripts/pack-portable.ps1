@@ -1,4 +1,4 @@
-# Portable 打包脚本
+﻿# Portable 打包脚本
 # 用法：powershell -ExecutionPolicy Bypass -File scripts/pack-portable.ps1
 #
 # 产出：
@@ -70,19 +70,22 @@ if ($needRestoreFromZip) {
     Copy-Item $exeSource $tmpExe -Force
 }
 
-# 4) 清理并重建 stage 目录
-if (Test-Path $outDir) {
-    Write-Host "Cleaning old dist-portable/ ..."
+# 4) 清理 stage 内容（只删 stage 内的子项，不删 stage 目录本身/不删 outDir，
+#    避免 explorer/终端等无害锁定整个目录时打包失败）
+if (-not (Test-Path $outDir)) {
+    New-Item -ItemType Directory -Path $outDir | Out-Null
+}
+if (-not (Test-Path $stageDir)) {
+    New-Item -ItemType Directory -Path $stageDir | Out-Null
+}
+Write-Host "Cleaning stage dir contents ..."
+Get-ChildItem -Path $stageDir -Force -ErrorAction SilentlyContinue | ForEach-Object {
     try {
-        Remove-Item $outDir -Recurse -Force
+        Remove-Item $_.FullName -Recurse -Force -ErrorAction Stop
     } catch {
-        Write-Host "  can not remove outDir (maybe exe still locked): $_" -ForegroundColor Yellow
-        Write-Host "  retrying in 1s..."
-        Start-Sleep -Seconds 1
-        Remove-Item $outDir -Recurse -Force
+        Write-Host "  skip locked: $($_.Name) ($_)" -ForegroundColor Yellow
     }
 }
-New-Item -ItemType Directory -Path $stageDir | Out-Null
 
 # 5) 放 exe
 Copy-Item $tmpExe (Join-Path $stageDir "QuickLauncher.exe")
@@ -105,6 +108,14 @@ if (Test-Path $defaultCfg) {
     Copy-Item $defaultCfg (Join-Path $stageDir "config.json")
 } else {
     Write-Host "No default-config.json found (skip bundling default config)"
+}
+
+# 8.5) 安装 / 卸载到开始菜单的辅助脚本
+foreach ($name in @("install-startmenu.ps1", "uninstall-startmenu.ps1")) {
+    $src = Join-Path $root "scripts\$name"
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $stageDir $name)
+    }
 }
 
 # 9) 报告
