@@ -7,7 +7,7 @@
 //! 前端完全掌控"要保存什么"——Rust 端不解析内容，只负责序列化后的字符串读写。
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 /// 计算 Portable 目录。
 ///
@@ -112,4 +112,117 @@ pub fn save_config(content: String) -> Result<(), String> {
 #[tauri::command]
 pub fn portable_dir_path() -> String {
     portable_dir().to_string_lossy().to_string()
+}
+
+/// Lexically resolve `.` and `..` without touching the filesystem.
+/// Unlike `fs::canonicalize` this works for non-existing paths and never
+/// produces a `\\?\` prefix.
+fn clean_path(path: &Path) -> PathBuf {
+    let mut comps = path.components().peekable();
+    let mut out = match comps.peek() {
+        Some(c @ Component::Prefix(..)) => {
+            let c = *c;
+            comps.next();
+            PathBuf::from(c.as_os_str())
+        }
+        _ => PathBuf::new(),
+    };
+    for c in comps {
+        match c {
+            Component::Prefix(..) => {}
+            Component::RootDir => out.push(c.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(seg) => out.push(seg),
+        }
+    }
+    out
+}
+
+/// A bare command name is resolved by the Shell via PATH (e.g. `python`).
+/// `.` and `..` contain no separator but are still paths, not commands.
+fn is_bare_command(t: &str) -> bool {
+    !t.contains(std::path::MAIN_SEPARATOR) && !t.contains('/') && t != "." && t != ".."
+}
+
+/// Normalize a path for portable use.
+///
+/// - URL (http/https/file) → unchanged
+/// - bare command name (no path separator) → unchanged (Shell finds it via PATH)
+/// - absolute path → cleaned (`.`/`..` resolved)
+/// - relative path (contains a separator, or is `.`/`..`) → resolved against
+///   the portable dir
+///
+/// This lets `config.json` use paths like `./tools/foo.exe` or `../shared/bar.exe`
+/// so the whole folder can be copied to another machine and still work,
+/// regardless of the process working directory.
+pub fn normalize_path(p: &str) -> String {
+    let t = p.trim();
+    if t.starts_with("http://") || t.starts_with("https://") || t.starts_with("file://") {
+        return t.to_string();
+    }
+    if is_bare_command(t) {
+        return t.to_string();
+    }
+    let path = Path::new(t);
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        portable_dir().join(path)
+    };
+    clean_path(&joined).to_string_lossy().to_string()
+}
+
+/// Resolve a directory path. Unlike `normalize_path` there is no PATH-lookup
+/// semantics, so a bare name like `tools` is relative to the portable dir.
+pub fn resolve_dir(p: &str) -> PathBuf {
+    let path = Path::new(p.trim());
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        portable_dir().join(path)
+    };
+    clean_path(&joined)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::clean_path;
+    use std::path::Path;
+
+    fn clean(p: &str) -> String {
+        clean_path(Path::new(p)).to_string_lossy().to_string()
+    }
+
+    #[test]
+    fn resolves_parent_and_current_dir() {
+        assert_eq!(clean(r"M:\a\b\..\c\d.exe"), r"M:\a\c\d.exe");
+        assert_eq!(clean(r"M:\a\.\b.exe"), r"M:\a\b.exe");
+        assert_eq!(clean(r"M:\a\b\..\..\tools\x.exe"), r"M:\tools\x.exe");
+    }
+
+    #[test]
+    fn keeps_roots_intact() {
+        assert_eq!(clean(r"M:\"), r"M:\");
+        assert_eq!(clean(r"C:\Windows\explorer.exe"), r"C:\Windows\explorer.exe");
+        assert_eq!(clean(r"\\srv\share\a\..\b.exe"), r"\\srv\share\b.exe");
+    }
+
+    #[test]
+    fn normalizes_forward_slashes() {
+        assert_eq!(clean("M:/a/./b/../c.exe"), r"M:\a\c.exe");
+    }
+
+    #[test]
+    fn dots_are_paths_not_commands() {
+        use super::is_bare_command;
+        assert!(is_bare_command("python"));
+        assert!(is_bare_command("explorer.exe"));
+        assert!(!is_bare_command("."));
+        assert!(!is_bare_command(".."));
+        assert!(!is_bare_command(r".\tools\x.exe"));
+        assert!(!is_bare_command("tools/x.exe"));
+    }
 }

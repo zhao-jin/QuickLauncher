@@ -6,6 +6,7 @@ import { launchItem, revealInExplorer } from "@/lib/ipc";
 import { emptyItem, type LaunchItem } from "@/types/config";
 import { keyFromEvent, makeKeyMatrix, TOP_BAR_KEYS } from "@/lib/hotkey";
 import { useItemIcon } from "@/lib/useIcon";
+import { isRelativePath, toAbsolutePath } from "@/lib/pathUtil";
 import EditItemDialog from "@/components/EditItemDialog";
 import SettingsDialog from "@/components/SettingsDialog";
 import ContextMenu, { type ContextMenuItem } from "@/components/ContextMenu";
@@ -649,11 +650,18 @@ function baseName(path: string): string {
 /** 鼠标悬浮 tooltip：用 \n 换行展示命令完整属性 */
 function buildTooltip(hotkey: string, item: LaunchItem): string {
   const lines: string[] = [];
+  const INDENT = " ".repeat(11);
+  /** 相对路径追加一行解析后的绝对路径 */
+  const pushPath = (label: string, value: string) => {
+    lines.push(`${label}${value}`);
+    if (isRelativePath(value)) lines.push(`${INDENT}→ ${toAbsolutePath(value)}`);
+  };
+
   lines.push(`[${hotkey}] ${item.name || "(未命名)"}`);
   lines.push("");
-  lines.push(`Target:    ${item.target || "(空)"}`);
+  pushPath("Target:    ", item.target || "(空)");
   if (item.arguments) lines.push(`Arguments: ${item.arguments}`);
-  if (item.startIn) lines.push(`Start in:  ${item.startIn}`);
+  if (item.startIn) pushPath("Start in:  ", item.startIn);
   // Run mode 仅在非默认时显示
   if (item.run && item.run !== "normal") {
     const runLabel: Record<string, string> = {
@@ -666,9 +674,9 @@ function buildTooltip(hotkey: string, item: LaunchItem): string {
   if (item.runAsAdmin) lines.push(`Run as administrator`);
   // 图标信息（resource 模式带 index 才显示）
   if (item.iconMode === "resource" && item.iconPath) {
-    lines.push(`Icon:      ${item.iconPath} #${item.iconIndex || 0}`);
+    pushPath("Icon:      ", `${item.iconPath} #${item.iconIndex || 0}`);
   } else if (item.iconMode === "custom" && item.iconPath) {
-    lines.push(`Icon:      ${item.iconPath}`);
+    pushPath("Icon:      ", item.iconPath);
   }
   lines.push("");
   lines.push("左键启动 · 右键菜单 · 拖拽移动");

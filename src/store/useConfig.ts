@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { AppConfig, LaunchItem, Tab } from "@/types/config";
 import { loadConfigRaw, saveConfigRaw } from "@/lib/ipc";
+import { initPathBase } from "@/lib/pathUtil";
 
 /** 默认示例配置 */
 function makeDefaultConfig(): AppConfig {
@@ -109,6 +110,8 @@ export const useConfig = create<ConfigStore>((set, get) => ({
   loaded: false,
 
   loadFromDisk: async () => {
+    // 先拿到 portable 目录，之后相对路径才能同步解析成绝对路径
+    await initPathBase();
     try {
       const raw = await loadConfigRaw();
       if (raw && raw.trim()) {

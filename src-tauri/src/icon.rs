@@ -43,6 +43,9 @@ pub fn extract_icon_to_png(target: String, icon_index: i32) -> Result<String, St
         return Err("icon not available for URL".into());
     }
 
+    // Resolve relative paths against the portable dir (portable config support)
+    let target = crate::config_store::normalize_path(&target);
+
     let cache_key = format!("{target}#{icon_index}");
     let hash = cache_hash(&cache_key);
 
@@ -75,6 +78,7 @@ pub fn extract_icon_to_png(target: String, icon_index: i32) -> Result<String, St
 pub fn enumerate_resource_icons(file: String) -> Result<i32, String> {
     #[cfg(windows)]
     {
+        let file = crate::config_store::normalize_path(&file);
         if !is_resource_container(&file) {
             return Err(format!("不是 PE 资源容器（应为 .dll/.exe/.icl）: {file}"));
         }

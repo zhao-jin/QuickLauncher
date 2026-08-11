@@ -1,6 +1,13 @@
 ﻿import { useEffect, useState } from "react";
 import type { LaunchItem, RunMode } from "@/types/config";
 import { pickExeFile, pickFolder, pickIcon } from "@/lib/ipc";
+import {
+  canRelativize,
+  getPathBase,
+  isRelativePath,
+  toAbsolutePath,
+  toRelativePath,
+} from "@/lib/pathUtil";
 import { useItemIcon } from "@/lib/useIcon";
 import IconPickerDialog from "@/components/IconPickerDialog";
 
@@ -170,8 +177,9 @@ function FilePane({
           className="flex-1 bg-black/40 border border-white/15 rounded px-2 py-1 outline-none focus:border-blue-400/60"
           value={draft.target}
           onChange={(e) => update("target", e.target.value)}
-          placeholder="exe 路径 / https URL / 文件夹路径"
+          placeholder="exe 路径 / https URL / 文件夹路径 / ./tools/x.exe"
         />
+        <RelBtn value={draft.target} onChange={(v) => update("target", v)} />
         <button
           className="px-2 py-1 text-xs bg-white/10 hover:bg-white/15 rounded"
           onClick={async () => {
@@ -198,6 +206,7 @@ function FilePane({
           Browse Folder
         </button>
       </Row>
+      <PathHint value={draft.target} />
 
       <Row label="Arguments">
         <input
@@ -215,6 +224,7 @@ function FilePane({
           onChange={(e) => update("startIn", e.target.value)}
           placeholder="工作目录，留空自动取 Target 所在目录"
         />
+        <RelBtn value={draft.startIn} onChange={(v) => update("startIn", v)} />
         <button
           className="px-2 py-1 text-xs bg-white/10 hover:bg-white/15 rounded"
           onClick={async () => {
@@ -225,6 +235,7 @@ function FilePane({
           Browse Folder
         </button>
       </Row>
+      <PathHint value={draft.startIn} />
 
       <Row label="Run">
         <select
@@ -252,9 +263,46 @@ function FilePane({
       </Row>
 
       <div className="text-xs text-white/50 pt-1">
-        提示：M3 会加入图标自动提取、拖拽添加与自定义图标。
+        提示：相对路径以 exe 所在目录为基准（<code>./tools/x.exe</code>、
+        <code>../shared/y.exe</code>），便于整包拷到其他机器。
       </div>
     </>
+  );
+}
+
+/** 相对路径时在下方补一行解析后的绝对路径 */
+function PathHint({ value }: { value: string }) {
+  if (!isRelativePath(value)) return null;
+  return (
+    <div className="-mt-1.5 pl-[88px] text-[11px] font-mono text-white/45 break-all">
+      → {toAbsolutePath(value)}
+    </div>
+  );
+}
+
+/** 绝对路径 ⇄ 相对路径切换 */
+function RelBtn({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const rel = isRelativePath(value);
+  const canRel = canRelativize(value);
+  if (!rel && !canRel) return null;
+  return (
+    <button
+      className="px-2 py-1 text-xs bg-white/10 hover:bg-white/15 rounded shrink-0"
+      title={
+        rel
+          ? `转为绝对路径\n基准：${getPathBase()}`
+          : `转为相对路径（相对 exe 目录）\n基准：${getPathBase()}`
+      }
+      onClick={() => onChange(rel ? toAbsolutePath(value) : toRelativePath(value))}
+    >
+      {rel ? "→ 绝对" : "→ 相对"}
+    </button>
   );
 }
 
@@ -338,6 +386,11 @@ function AppearancePane({
                 <div className="font-mono text-white/65 break-all">
                   {draft.iconPath || "<未选择>"}
                 </div>
+                {isRelativePath(draft.iconPath) && (
+                  <div className="font-mono text-white/45 break-all">
+                    → {toAbsolutePath(draft.iconPath)}
+                  </div>
+                )}
               </>
             )}
             {isResource && (
@@ -347,6 +400,11 @@ function AppearancePane({
                   {draft.iconPath || "<未选择>"}{" "}
                   <span className="text-blue-300">#{draft.iconIndex || 0}</span>
                 </div>
+                {isRelativePath(draft.iconPath) && (
+                  <div className="font-mono text-white/45 break-all">
+                    → {toAbsolutePath(draft.iconPath)}
+                  </div>
+                )}
               </>
             )}
           </div>

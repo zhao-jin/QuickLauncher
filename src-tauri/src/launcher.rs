@@ -70,39 +70,23 @@ mod win {
         }) as i32
     }
 
-    /// 当 target 是 URL 时直接返回；否则返回绝对路径字符串
+    /// URL → 原样；绝对路径 → 原样；裸命令名（无分隔符）→ 原样交 Shell 查 PATH；
+    /// 相对路径（含分隔符）→ 按 portable 目录拼绝对，这样 config.json 里写
+    /// `./tools/foo.exe` 拷到别的机器也能用。
     fn normalize_target(target: &str) -> String {
-        let t = target.trim();
-        if t.starts_with("http://") || t.starts_with("https://") || t.starts_with("file://") {
-            return t.to_string();
-        }
-        let p = Path::new(t);
-        if p.is_absolute() {
-            // 绝对路径直接用
-            return t.to_string();
-        }
-        // 裸命令（如 "python" / "python3" / "explorer"）——保持不变，
-        // 让 ShellExecuteExW 去 PATH 里查。若用 current_dir 拼绝对路径反而会
-        // 变成 "<cwd>\python" 这种不存在的文件。
-        if !t.contains(std::path::MAIN_SEPARATOR) && !t.contains('/') {
-            return t.to_string();
-        }
-        // 相对路径（含路径分隔符）→ 相对 cwd 拼绝对
-        std::env::current_dir()
-            .map(|d| d.join(p))
-            .unwrap_or_else(|_| p.to_path_buf())
-            .to_string_lossy()
-            .to_string()
+        crate::config_store::normalize_path(target)
     }
 
     /// 推断 "Start in"：未指定时取 target 父目录（对 URL 不生效）；
-    /// 若指定的目录实际不存在（例如 miles 的旧配置里 I:\RED\mtool），
-    /// 返回空串，让 Shell 自己决定（避免 ShellExecuteExW 因 workdir 无效直接失败）。
+    /// 若指定的目录实际不存在，返回空串，让 Shell 自己决定
+    /// （避免 ShellExecuteExW 因 workdir 无效直接失败）。
+    /// 相对路径的 startIn 按 portable 目录解析。
     fn infer_workdir(item: &LaunchItem, target: &str) -> String {
-        if !item.start_in.trim().is_empty() {
-            let p = Path::new(item.start_in.trim());
-            if p.is_dir() {
-                return item.start_in.clone();
+        let raw = item.start_in.trim();
+        if !raw.is_empty() {
+            let resolved = crate::config_store::resolve_dir(raw);
+            if resolved.is_dir() {
+                return resolved.to_string_lossy().to_string();
             }
             // 指定了但不存在 → 忽略
             return String::new();
@@ -236,22 +220,13 @@ mod win {
     }
 
     /// 把 target 解析为绝对路径：
-    ///   - 绝对路径 → 原样返回
-    ///   - 相对路径（含分隔符） → 相对 cwd 拼接
+    ///   - 绝对路径 / 相对路径（含分隔符，或 `.`/`..`） → 按 portable 目录解析并规范化
     ///   - 裸命令名（如 "python"） → 用 PATH 查找（逐个目录 + PATHEXT 后缀）
     fn resolve_to_absolute(target: &str) -> Result<String, String> {
         let t = target.trim();
-        let p = Path::new(t);
-        if p.is_absolute() {
-            return Ok(t.to_string());
-        }
-        if t.contains(std::path::MAIN_SEPARATOR) || t.contains('/') {
-            // 相对路径
-            return Ok(std::env::current_dir()
-                .map_err(|e| format!("cwd failed: {e}"))?
-                .join(p)
-                .to_string_lossy()
-                .to_string());
+        let normalized = crate::config_store::normalize_path(t);
+        if Path::new(&normalized).is_absolute() {
+            return Ok(normalized);
         }
 
         // 裸命令：查 PATH
@@ -312,7 +287,7 @@ pub fn launch_item(item: LaunchItem) -> Result<(), String> {
 ///   - 绝对文件路径（exe/bat/任意文件）→ `explorer /select,<path>` 高亮选中
 ///   - 目录 → 直接 `explorer <path>`（打开该目录）
 ///   - 裸命令名（不含路径分隔符）→ 先 `where <cmd>` 找绝对路径再 select；找不到报错
-///   - 相对路径 → 按当前 cwd 拼绝对再处理
+///   - 相对路径 → 按 portable 目录拼绝对再处理
 #[tauri::command]
 pub fn reveal_in_explorer(target: String) -> Result<(), String> {
     let t = target.trim();

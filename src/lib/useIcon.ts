@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { extractIcon } from "@/lib/ipc";
+import { toAbsolutePath } from "@/lib/pathUtil";
 import type { LaunchItem } from "@/types/config";
 
 /** 已解析过的 icon URL 缓存 */
@@ -44,9 +45,9 @@ export function useItemIcon(item: LaunchItem | undefined): string | null {
     let cancelled = false;
 
     const resolve = async () => {
-      // custom：直接转 file URL
+      // custom：先按 portable 目录解析为绝对路径，再转 file URL
       if (item.iconMode === "custom" && item.iconPath) {
-        const u = convertFileSrc(item.iconPath);
+        const u = convertFileSrc(toAbsolutePath(item.iconPath));
         cache.set(k, u);
         if (!cancelled) setUrl(u);
         return;
