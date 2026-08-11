@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useConfig } from "@/store/useConfig";
-import { getPortableDir, pickFolder } from "@/lib/ipc";
+import { getPortableDir, pickFolder, resolvePathRoots } from "@/lib/ipc";
+import type { ResolvedVar } from "@/lib/ipc";
 import type { AppConfig } from "@/types/config";
 
 interface Props {
@@ -199,6 +200,7 @@ export default function SettingsDialog({ onClose }: Props) {
  *
  * 内部用数组维护顺序与编辑中间态（允许暂时空名/重名），
  * 每次变更折叠成 Record 抛给上层；空名行被忽略，重名后者生效并标红。
+ * 同时展示每个变量实际生效的值 —— `QL_<名字>` 环境变量会覆盖这里的配置。
  */
 function RootsEditor({
   roots,
@@ -210,6 +212,12 @@ function RootsEditor({
   const [entries, setEntries] = useState<Array<[string, string]>>(() =>
     Object.entries(roots)
   );
+  const [resolved, setResolved] = useState<ResolvedVar[]>([]);
+
+  const refresh = () => {
+    resolvePathRoots().then(setResolved).catch(() => {});
+  };
+  useEffect(refresh, []);
 
   const emit = (next: Array<[string, string]>) => {
     setEntries(next);
@@ -230,11 +238,23 @@ function RootsEditor({
     if (key) nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
   }
 
+  const infoOf = (name: string) =>
+    resolved.find((r) => r.name.toLowerCase() === name.trim().toLowerCase());
+
+  // QL_* 覆盖了 config 里没有的名字，也要让用户看见
+  const extraOverrides = resolved.filter(
+    (r) =>
+      r.source === "envoverride" &&
+      !entries.some(([n]) => n.trim().toLowerCase() === r.name.toLowerCase())
+  );
+
   return (
     <>
       <div className="text-[11px] text-white/45">
         给常用根目录起名，条目路径里用 <code className="text-white/70">{"${名字}"}</code>{" "}
-        引用。换机器只改这里，跨盘符也适用。
+        引用。取值优先级：
+        <code className="text-white/70">QL_名字</code> 环境变量 → 下表 →
+        同名环境变量。
       </div>
 
       {entries.length === 0 && (
@@ -246,61 +266,120 @@ function RootsEditor({
           const trimmed = name.trim();
           const duplicated = (nameCounts.get(trimmed.toLowerCase()) ?? 0) > 1;
           const badName = trimmed !== "" && !/^[A-Za-z0-9_-]+$/.test(trimmed);
+          const info = infoOf(name);
+          const overridden = info?.source === "envoverride";
           return (
-            <div key={index} className="flex items-center gap-1.5">
-              <input
-                className={`w-28 shrink-0 bg-black/40 border rounded px-2 py-1 font-mono text-xs outline-none focus:border-blue-400/60 ${
-                  duplicated || badName ? "border-amber-400/70" : "border-white/15"
-                }`}
-                value={name}
-                spellCheck={false}
-                placeholder="名字"
-                title={
-                  duplicated
-                    ? "名字重复，后面的会覆盖前面的"
-                    : badName
-                      ? "只允许字母、数字、下划线和连字符"
-                      : ""
-                }
-                onChange={(e) => setAt(index, e.target.value, value)}
-              />
-              <input
-                className="flex-1 min-w-0 bg-black/40 border border-white/15 rounded px-2 py-1 font-mono text-xs outline-none focus:border-blue-400/60"
-                value={value}
-                spellCheck={false}
-                placeholder="目标目录，如 I:\RED"
-                onChange={(e) => setAt(index, name, e.target.value)}
-              />
-              <button
-                className="px-2 py-1 text-xs bg-white/10 hover:bg-white/15 rounded shrink-0"
-                title="选择目录"
-                onClick={async () => {
-                  const picked = await pickFolder();
-                  if (picked) setAt(index, name, picked);
-                }}
-              >
-                ...
-              </button>
-              <button
-                className="w-6 h-6 rounded text-red-400 hover:bg-red-500/15 shrink-0"
-                title="删除"
-                onClick={() => emit(entries.filter((_, i) => i !== index))}
-              >
-                ×
-              </button>
+            <div key={index} className="space-y-0.5">
+              <div className="flex items-center gap-1.5">
+                <input
+                  className={`w-28 shrink-0 bg-black/40 border rounded px-2 py-1 font-mono text-xs outline-none focus:border-blue-400/60 ${
+                    duplicated || badName
+                      ? "border-amber-400/70"
+                      : "border-white/15"
+                  }`}
+                  value={name}
+                  spellCheck={false}
+                  placeholder="名字"
+                  title={
+                    duplicated
+                      ? "名字重复，后面的会覆盖前面的"
+                      : badName
+                        ? "只允许字母、数字、下划线和连字符"
+                        : ""
+                  }
+                  onChange={(e) => setAt(index, e.target.value, value)}
+                />
+                <input
+                  className={`flex-1 min-w-0 bg-black/40 border rounded px-2 py-1 font-mono text-xs outline-none focus:border-blue-400/60 ${
+                    overridden ? "border-white/10 text-white/40" : "border-white/15"
+                  }`}
+                  value={value}
+                  spellCheck={false}
+                  placeholder="目标目录，如 I:\RED"
+                  onChange={(e) => setAt(index, name, e.target.value)}
+                />
+                <button
+                  className="px-2 py-1 text-xs bg-white/10 hover:bg-white/15 rounded shrink-0"
+                  title="选择目录"
+                  onClick={async () => {
+                    const picked = await pickFolder();
+                    if (picked) setAt(index, name, picked);
+                  }}
+                >
+                  ...
+                </button>
+                <button
+                  className="w-6 h-6 rounded text-red-400 hover:bg-red-500/15 shrink-0"
+                  title="删除"
+                  onClick={() => emit(entries.filter((_, i) => i !== index))}
+                >
+                  ×
+                </button>
+              </div>
+              <VarStatus info={info} hasValue={value.trim() !== ""} />
             </div>
           );
         })}
       </div>
 
-      <button
-        className="px-2.5 py-1 text-xs bg-white/10 hover:bg-white/15 rounded"
-        onClick={() => emit([...entries, ["", ""]])}
-      >
-        + 添加变量
-      </button>
+      {extraOverrides.length > 0 && (
+        <div className="text-[11px] text-white/45 space-y-0.5 pt-1">
+          <div className="text-white/55">仅来自环境变量：</div>
+          {extraOverrides.map((r) => (
+            <div key={r.name} className="font-mono break-all">
+              <span className="text-blue-300">${`{${r.name}}`}</span> = {r.value}
+              {!r.exists && <span className="text-amber-300/90"> （目录不存在）</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <button
+          className="px-2.5 py-1 text-xs bg-white/10 hover:bg-white/15 rounded"
+          onClick={() => emit([...entries, ["", ""]])}
+        >
+          + 添加变量
+        </button>
+        <button
+          className="px-2.5 py-1 text-xs bg-white/10 hover:bg-white/15 rounded"
+          title="重新读取环境变量（改完 QL_* 需重启本程序才生效）"
+          onClick={refresh}
+        >
+          刷新状态
+        </button>
+      </div>
     </>
   );
+}
+
+/** 单个变量的生效状态：被环境变量覆盖 / 目录不存在 */
+function VarStatus({
+  info,
+  hasValue,
+}: {
+  info: ResolvedVar | undefined;
+  hasValue: boolean;
+}) {
+  if (!info) return null;
+  if (info.source === "envoverride") {
+    return (
+      <div className="pl-[7.5rem] text-[11px] font-mono text-blue-300/90 break-all">
+        ← QL_{info.name} = {info.value}
+        {!info.exists && (
+          <span className="text-amber-300/90"> （目录不存在）</span>
+        )}
+      </div>
+    );
+  }
+  if (hasValue && !info.exists) {
+    return (
+      <div className="pl-[7.5rem] text-[11px] text-amber-300/90">
+        目录不存在
+      </div>
+    );
+  }
+  return null;
 }
 
 function Section({

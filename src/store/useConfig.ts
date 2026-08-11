@@ -1,14 +1,30 @@
 import { create } from "zustand";
 import type { AppConfig, LaunchItem, Tab } from "@/types/config";
-import { loadConfigRaw, saveConfigRaw, setPathRootsBackend } from "@/lib/ipc";
+import {
+  loadConfigRaw,
+  resolvePathRoots,
+  saveConfigRaw,
+  setPathRootsBackend,
+} from "@/lib/ipc";
 import { initPathBase, setPathRoots } from "@/lib/pathUtil";
 
-/** 把命名根目录同步给前端工具与后端解析器 */
-function syncRoots(roots: Record<string, string> | undefined) {
+/**
+ * 同步命名根目录：先把 config 里的表推给后端，再拉回实际生效值
+ * （`QL_<NAME>` 环境变量会覆盖 config），让前端显示与启动行为一致。
+ */
+async function syncRoots(roots: Record<string, string> | undefined) {
   setPathRoots(roots);
-  setPathRootsBackend(roots ?? {}).catch((e) =>
-    console.error("set path roots failed", e)
-  );
+  try {
+    await setPathRootsBackend(roots ?? {});
+    const resolved = await resolvePathRoots();
+    const effective: Record<string, string> = {};
+    for (const item of resolved) {
+      if (item.value) effective[item.name] = item.value;
+    }
+    setPathRoots(effective);
+  } catch (e) {
+    console.error("sync path roots failed", e);
+  }
 }
 
 /** 默认示例配置 */
@@ -137,12 +153,13 @@ export const useConfig = create<ConfigStore>((set, get) => ({
           topBar: parsed.topBar ?? def.topBar,
           tabs: parsed.tabs ?? def.tabs,
         };
-        syncRoots(merged.roots);
+        // 等变量解析完再渲染，否则首帧显示的绝对路径可能不对
+        await syncRoots(merged.roots);
         set({ config: merged, loaded: true });
       } else {
         // 不存在 → 用默认并立即写入
         const def = makeDefaultConfig();
-        syncRoots(def.roots);
+        await syncRoots(def.roots);
         set({ config: def, loaded: true });
         await saveConfigRaw(JSON.stringify(def, null, 2)).catch((e) =>
           console.error("first save failed", e)

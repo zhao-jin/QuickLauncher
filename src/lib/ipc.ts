@@ -44,6 +44,23 @@ export async function setPathRootsBackend(
   await invoke("set_path_roots", { roots });
 }
 
+/** 变量取值来源：QL_ 环境变量覆盖 / config.roots / 普通环境变量 */
+export type VarSource = "envoverride" | "config" | "env";
+
+export interface ResolvedVar {
+  name: string;
+  value: string;
+  source: VarSource;
+  /** 被 QL_ 环境变量覆盖时，这里是 config 里原本的值 */
+  overriddenValue: string | null;
+  exists: boolean;
+}
+
+/** 查询每个变量当前实际生效的值与来源 */
+export async function resolvePathRoots(): Promise<ResolvedVar[]> {
+  return await invoke<ResolvedVar[]>("resolve_path_roots");
+}
+
 /** 彻底退出进程（绕过 CloseRequested 的 hide 拦截） */
 export async function quitApp(): Promise<void> {
   await invoke("quit_app");
