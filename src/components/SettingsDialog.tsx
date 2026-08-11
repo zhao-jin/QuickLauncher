@@ -241,10 +241,13 @@ function RootsEditor({
   const infoOf = (name: string) =>
     resolved.find((r) => r.name.toLowerCase() === name.trim().toLowerCase());
 
-  // QL_* 覆盖了 config 里没有的名字，也要让用户看见
+  const isFromEnv = (r: ResolvedVar | undefined) =>
+    r?.source === "env" || r?.source === "envprefixed";
+
+  // QL_* 设了但 config 里没这个名字，也要让用户看见
   const extraOverrides = resolved.filter(
     (r) =>
-      r.source === "envoverride" &&
+      isFromEnv(r) &&
       !entries.some(([n]) => n.trim().toLowerCase() === r.name.toLowerCase())
   );
 
@@ -252,9 +255,8 @@ function RootsEditor({
     <>
       <div className="text-[11px] text-white/45">
         给常用根目录起名，条目路径里用 <code className="text-white/70">{"${名字}"}</code>{" "}
-        引用。取值优先级：
-        <code className="text-white/70">QL_名字</code> 环境变量 → 下表 →
-        同名环境变量。
+        引用。<span className="text-white/60">同名环境变量优先</span>
+        （便于多机共用同一份配置，也能和 bat 脚本共享）， 下表作为未预设时的默认值。
       </div>
 
       {entries.length === 0 && (
@@ -267,7 +269,7 @@ function RootsEditor({
           const duplicated = (nameCounts.get(trimmed.toLowerCase()) ?? 0) > 1;
           const badName = trimmed !== "" && !/^[A-Za-z0-9_-]+$/.test(trimmed);
           const info = infoOf(name);
-          const overridden = info?.source === "envoverride";
+          const shadowed = isFromEnv(info);
           return (
             <div key={index} className="space-y-0.5">
               <div className="flex items-center gap-1.5">
@@ -291,11 +293,16 @@ function RootsEditor({
                 />
                 <input
                   className={`flex-1 min-w-0 bg-black/40 border rounded px-2 py-1 font-mono text-xs outline-none focus:border-blue-400/60 ${
-                    overridden ? "border-white/10 text-white/40" : "border-white/15"
+                    shadowed ? "border-white/10 text-white/40" : "border-white/15"
                   }`}
                   value={value}
                   spellCheck={false}
                   placeholder="目标目录，如 I:\RED"
+                  title={
+                    shadowed
+                      ? "环境变量已预设该名字，这里的值当前不生效"
+                      : ""
+                  }
                   onChange={(e) => setAt(index, name, e.target.value)}
                 />
                 <button
@@ -343,7 +350,7 @@ function RootsEditor({
         </button>
         <button
           className="px-2.5 py-1 text-xs bg-white/10 hover:bg-white/15 rounded"
-          title="重新读取环境变量（改完 QL_* 需重启本程序才生效）"
+          title="重新读取环境变量（外部改完需重启本程序才生效）"
           onClick={refresh}
         >
           刷新状态
@@ -353,7 +360,7 @@ function RootsEditor({
   );
 }
 
-/** 单个变量的生效状态：被环境变量覆盖 / 目录不存在 */
+/** 单个变量的生效状态：来自环境变量 / 目录不存在 */
 function VarStatus({
   info,
   hasValue,
@@ -362,10 +369,11 @@ function VarStatus({
   hasValue: boolean;
 }) {
   if (!info) return null;
-  if (info.source === "envoverride") {
+  if (info.source === "env" || info.source === "envprefixed") {
+    const envName = info.source === "envprefixed" ? `QL_${info.name}` : info.name;
     return (
       <div className="pl-[7.5rem] text-[11px] font-mono text-blue-300/90 break-all">
-        ← QL_{info.name} = {info.value}
+        ← 环境变量 {envName} = {info.value}
         {!info.exists && (
           <span className="text-amber-300/90"> （目录不存在）</span>
         )}

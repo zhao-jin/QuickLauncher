@@ -44,14 +44,17 @@ export async function setPathRootsBackend(
   await invoke("set_path_roots", { roots });
 }
 
-/** 变量取值来源：QL_ 环境变量覆盖 / config.roots / 普通环境变量 */
-export type VarSource = "envoverride" | "config" | "env";
+/**
+ * 变量取值来源。环境变量优先于 config，因为这些根目录通常是机器上预设一次、
+ * 与其他工具共用的；config.roots 只是自带默认值。
+ */
+export type VarSource = "envprefixed" | "env" | "config";
 
 export interface ResolvedVar {
   name: string;
   value: string;
   source: VarSource;
-  /** 被 QL_ 环境变量覆盖时，这里是 config 里原本的值 */
+  /** 被环境变量遮蔽时，这里是 config 里原本的值 */
   overriddenValue: string | null;
   exists: boolean;
 }

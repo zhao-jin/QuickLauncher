@@ -170,20 +170,20 @@ pub fn set_path_roots(roots: HashMap<String, String>) {
 /// Max substitution passes, so a root referring to itself cannot hang us.
 const MAX_EXPAND_PASSES: usize = 8;
 
-/// Prefix for the dedicated environment override, e.g. `QL_RED` overrides `RED`.
-/// Using a prefix avoids clashing with unrelated variables named `Self`, `MW`…
+/// Optional prefix for escaping name clashes: `QL_RED` also satisfies `${RED}`.
+/// Useful when a short name like `MW` would collide with something unrelated.
 pub const ENV_PREFIX: &str = "QL_";
 
 /// Where a variable's value came from, for display in the UI.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum VarSource {
-    /// `QL_<NAME>` environment variable (overrides the config)
-    EnvOverride,
-    /// `roots` table in config.json
-    Config,
-    /// Plain `<NAME>` environment variable (e.g. APPDATA)
+    /// `QL_<NAME>` environment variable
+    EnvPrefixed,
+    /// Plain `<NAME>` environment variable — the usual case for pre-set dirs
     Env,
+    /// `roots` table in config.json (fallback when nothing is pre-set)
+    Config,
 }
 
 fn root_from_config(name: &str) -> Option<String> {
@@ -203,26 +203,25 @@ fn non_empty(value: String) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-/// Resolve a variable, most specific source first:
-///   1. `QL_<NAME>` env var — per-machine override, lets one config.json be
-///      shared across machines without edits
-///   2. `roots` in config.json — self-contained default, works with no setup
-///   3. `<NAME>` env var — so `${APPDATA}` and friends keep working
+fn env_non_empty(name: &str) -> Option<String> {
+    std::env::var(name).ok().and_then(non_empty)
+}
+
+/// Resolve a variable. Environment wins over the config, because these roots
+/// are normally pre-set once per machine and shared with other tools; the
+/// config table is only a built-in default so a fresh copy still runs.
+///
+///   1. `QL_<NAME>` env var  — escape hatch for name clashes
+///   2. `<NAME>` env var     — the pre-set machine-wide directory
+///   3. `roots` in config.json — bundled default, keeps portable use working
 fn lookup_var_with_source(name: &str) -> Option<(String, VarSource)> {
-    std::env::var(format!("{ENV_PREFIX}{name}"))
-        .ok()
-        .and_then(non_empty)
-        .map(|v| (v, VarSource::EnvOverride))
+    env_non_empty(&format!("{ENV_PREFIX}{name}"))
+        .map(|v| (v, VarSource::EnvPrefixed))
+        .or_else(|| env_non_empty(name).map(|v| (v, VarSource::Env)))
         .or_else(|| {
             root_from_config(name)
                 .and_then(non_empty)
                 .map(|v| (v, VarSource::Config))
-        })
-        .or_else(|| {
-            std::env::var(name)
-                .ok()
-                .and_then(non_empty)
-                .map(|v| (v, VarSource::Env))
         })
 }
 
@@ -238,12 +237,12 @@ pub struct ResolvedVar {
     /// Value actually in effect
     pub value: String,
     pub source: VarSource,
-    /// Set when an env override shadows a different value from the config
+    /// Set when the environment shadows a different value from the config
     pub overridden_value: Option<String>,
     pub exists: bool,
 }
 
-/// Report how each configured root currently resolves, plus any `QL_*` override
+/// Report how each configured root currently resolves, plus any `QL_*` variable
 /// that has no matching entry in the config.
 #[tauri::command]
 pub fn resolve_path_roots() -> Vec<ResolvedVar> {
@@ -252,7 +251,9 @@ pub fn resolve_path_roots() -> Vec<ResolvedVar> {
         .map(|g| g.keys().cloned().collect())
         .unwrap_or_default();
 
-    // Surface QL_* overrides that the config does not know about.
+    // Surface QL_* variables the config does not know about. Plain names are
+    // not enumerated: the environment has hundreds and we cannot tell which
+    // ones are meant as launcher roots.
     for (key, _) in std::env::vars() {
         let Some(stripped) = key.strip_prefix(ENV_PREFIX) else {
             continue;
@@ -273,7 +274,9 @@ pub fn resolve_path_roots() -> Vec<ResolvedVar> {
             let config_value = root_from_config(&name).and_then(non_empty);
             let (value, source) = resolved.unwrap_or_else(|| (String::new(), VarSource::Config));
             let overridden_value = match (&source, &config_value) {
-                (VarSource::EnvOverride, Some(cfg)) if *cfg != value => Some(cfg.clone()),
+                (VarSource::EnvPrefixed | VarSource::Env, Some(cfg)) if *cfg != value => {
+                    Some(cfg.clone())
+                }
                 _ => None,
             };
             let exists = !value.is_empty() && Path::new(&value).is_dir();
@@ -465,47 +468,69 @@ mod tests {
     }
 
     #[test]
-    fn env_override_beats_config() {
-        use super::{expand_vars, set_path_roots, VarSource, ENV_PREFIX};
+    fn env_beats_config() {
+        use super::{expand_vars, set_path_roots, VarSource};
         use std::collections::HashMap;
 
         let mut roots = HashMap::new();
-        roots.insert("PROJ".to_string(), r"I:\FromConfig".to_string());
+        roots.insert("QL_TEST_PROJ".to_string(), r"I:\FromConfig".to_string());
         set_path_roots(roots);
-        assert_eq!(expand_vars(r"${PROJ}\a"), r"I:\FromConfig\a");
+        assert_eq!(expand_vars(r"${QL_TEST_PROJ}\a"), r"I:\FromConfig\a");
 
-        // QL_PROJ wins, so one config.json can serve several machines
-        let key = format!("{ENV_PREFIX}PROJ");
-        std::env::set_var(&key, r"E:\FromEnv");
-        assert_eq!(expand_vars(r"${PROJ}\a"), r"E:\FromEnv\a");
+        // A pre-set machine-wide directory wins over the bundled default,
+        // so one config.json can serve several machines unedited.
+        std::env::set_var("QL_TEST_PROJ", r"E:\FromEnv");
+        assert_eq!(expand_vars(r"${QL_TEST_PROJ}\a"), r"E:\FromEnv\a");
 
         let report = super::resolve_path_roots();
-        let entry = report.iter().find(|r| r.name == "PROJ").unwrap();
-        assert_eq!(entry.source, VarSource::EnvOverride);
+        let entry = report.iter().find(|r| r.name == "QL_TEST_PROJ").unwrap();
+        assert_eq!(entry.source, VarSource::Env);
         assert_eq!(entry.value, r"E:\FromEnv");
         assert_eq!(entry.overridden_value.as_deref(), Some(r"I:\FromConfig"));
 
-        // An empty override must not shadow the config value
-        std::env::set_var(&key, "   ");
-        assert_eq!(expand_vars(r"${PROJ}\a"), r"I:\FromConfig\a");
+        // An empty env var must not shadow the config value
+        std::env::set_var("QL_TEST_PROJ", "   ");
+        assert_eq!(expand_vars(r"${QL_TEST_PROJ}\a"), r"I:\FromConfig\a");
 
-        std::env::remove_var(&key);
-        assert_eq!(expand_vars(r"${PROJ}\a"), r"I:\FromConfig\a");
+        std::env::remove_var("QL_TEST_PROJ");
+        assert_eq!(expand_vars(r"${QL_TEST_PROJ}\a"), r"I:\FromConfig\a");
         set_path_roots(HashMap::new());
     }
 
     #[test]
-    fn plain_env_var_is_last_resort() {
+    fn prefixed_env_wins_over_plain_name() {
         use super::{expand_vars, set_path_roots};
         use std::collections::HashMap;
 
         set_path_roots(HashMap::new());
-        std::env::set_var("QL_TEST_PLAIN_ENV", r"D:\viaenv");
-        // Not in roots, no QL_ prefix form -> falls through to the plain name
-        assert_eq!(
-            expand_vars(r"${QL_TEST_PLAIN_ENV}\x"),
-            r"D:\viaenv\x"
-        );
-        std::env::remove_var("QL_TEST_PLAIN_ENV");
+        std::env::set_var("TESTROOT", r"D:\plain");
+        assert_eq!(expand_vars(r"${TESTROOT}\x"), r"D:\plain\x");
+
+        // QL_ prefix is the escape hatch when a bare name is already taken
+        std::env::set_var("QL_TESTROOT", r"D:\prefixed");
+        assert_eq!(expand_vars(r"${TESTROOT}\x"), r"D:\prefixed\x");
+
+        std::env::remove_var("QL_TESTROOT");
+        std::env::remove_var("TESTROOT");
+    }
+
+    #[test]
+    fn config_is_used_when_nothing_preset() {
+        use super::{expand_vars, set_path_roots, VarSource};
+        use std::collections::HashMap;
+
+        let mut roots = HashMap::new();
+        roots.insert("QL_TEST_ONLY_CFG".to_string(), r"H:\cfg".to_string());
+        set_path_roots(roots);
+        assert_eq!(expand_vars(r"${QL_TEST_ONLY_CFG}\x"), r"H:\cfg\x");
+
+        let report = super::resolve_path_roots();
+        let entry = report
+            .iter()
+            .find(|r| r.name == "QL_TEST_ONLY_CFG")
+            .unwrap();
+        assert_eq!(entry.source, VarSource::Config);
+        assert!(entry.overridden_value.is_none());
+        set_path_roots(HashMap::new());
     }
 }
