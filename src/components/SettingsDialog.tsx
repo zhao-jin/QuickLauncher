@@ -241,15 +241,7 @@ function RootsEditor({
   const infoOf = (name: string) =>
     resolved.find((r) => r.name.toLowerCase() === name.trim().toLowerCase());
 
-  const isFromEnv = (r: ResolvedVar | undefined) =>
-    r?.source === "env" || r?.source === "envprefixed";
-
-  // QL_* 设了但 config 里没这个名字，也要让用户看见
-  const extraOverrides = resolved.filter(
-    (r) =>
-      isFromEnv(r) &&
-      !entries.some(([n]) => n.trim().toLowerCase() === r.name.toLowerCase())
-  );
+  const isFromEnv = (r: ResolvedVar | undefined) => r?.source === "env";
 
   return (
     <>
@@ -329,18 +321,6 @@ function RootsEditor({
         })}
       </div>
 
-      {extraOverrides.length > 0 && (
-        <div className="text-[11px] text-white/45 space-y-0.5 pt-1">
-          <div className="text-white/55">仅来自环境变量：</div>
-          {extraOverrides.map((r) => (
-            <div key={r.name} className="font-mono break-all">
-              <span className="text-blue-300">${`{${r.name}}`}</span> = {r.value}
-              {!r.exists && <span className="text-amber-300/90"> （目录不存在）</span>}
-            </div>
-          ))}
-        </div>
-      )}
-
       <div className="flex items-center gap-2">
         <button
           className="px-2.5 py-1 text-xs bg-white/10 hover:bg-white/15 rounded"
@@ -369,11 +349,10 @@ function VarStatus({
   hasValue: boolean;
 }) {
   if (!info) return null;
-  if (info.source === "env" || info.source === "envprefixed") {
-    const envName = info.source === "envprefixed" ? `QL_${info.name}` : info.name;
+  if (info.source === "env") {
     return (
       <div className="pl-[7.5rem] text-[11px] font-mono text-blue-300/90 break-all">
-        ← 环境变量 {envName} = {info.value}
+        ← 环境变量 {info.name} = {info.value}
         {!info.exists && (
           <span className="text-amber-300/90"> （目录不存在）</span>
         )}

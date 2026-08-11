@@ -226,15 +226,6 @@ if (changes.length === 0) {
 const leftover = collectAbsolutePaths().filter((p) => !/^c:\\windows/i.test(p));
 console.log(`still absolute (non-system): ${leftover.length}`);
 
-// Per-machine overrides: setting QL_<NAME> lets one config.json serve several
-// machines without editing it.
-if (Object.keys(roots).length > 0) {
-  console.log("\nto override on another machine (no config edit needed):");
-  for (const [name, dir] of Object.entries(roots)) {
-    console.log(`  setx QL_${name} "${dir}"`);
-  }
-}
-
 if (args.write && (changes.length > 0 || detected.length > 0)) {
   config.roots = roots;
   const backup = `${configPath}.${Date.now()}.bak`;

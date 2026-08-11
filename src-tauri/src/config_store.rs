@@ -170,17 +170,11 @@ pub fn set_path_roots(roots: HashMap<String, String>) {
 /// Max substitution passes, so a root referring to itself cannot hang us.
 const MAX_EXPAND_PASSES: usize = 8;
 
-/// Optional prefix for escaping name clashes: `QL_RED` also satisfies `${RED}`.
-/// Useful when a short name like `MW` would collide with something unrelated.
-pub const ENV_PREFIX: &str = "QL_";
-
 /// Where a variable's value came from, for display in the UI.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum VarSource {
-    /// `QL_<NAME>` environment variable
-    EnvPrefixed,
-    /// Plain `<NAME>` environment variable — the usual case for pre-set dirs
+    /// `<NAME>` environment variable — the pre-set machine-wide directory
     Env,
     /// `roots` table in config.json (fallback when nothing is pre-set)
     Config,
@@ -207,17 +201,16 @@ fn env_non_empty(name: &str) -> Option<String> {
     std::env::var(name).ok().and_then(non_empty)
 }
 
-/// Resolve a variable. Environment wins over the config, because these roots
-/// are normally pre-set once per machine and shared with other tools; the
-/// config table is only a built-in default so a fresh copy still runs.
+/// Resolve a variable. Environment wins over the config: these roots are
+/// normally pre-set once per machine (the same names usable from `%NAME%` in
+/// bat scripts and other tools), and config.roots is just a bundled default
+/// so a fresh copy still runs with no setup.
 ///
-///   1. `QL_<NAME>` env var  — escape hatch for name clashes
-///   2. `<NAME>` env var     — the pre-set machine-wide directory
-///   3. `roots` in config.json — bundled default, keeps portable use working
+///   1. `<NAME>` env var       — the pre-set machine-wide directory
+///   2. `roots` in config.json — bundled default, keeps portable use working
 fn lookup_var_with_source(name: &str) -> Option<(String, VarSource)> {
-    env_non_empty(&format!("{ENV_PREFIX}{name}"))
-        .map(|v| (v, VarSource::EnvPrefixed))
-        .or_else(|| env_non_empty(name).map(|v| (v, VarSource::Env)))
+    env_non_empty(name)
+        .map(|v| (v, VarSource::Env))
         .or_else(|| {
             root_from_config(name)
                 .and_then(non_empty)
@@ -242,29 +235,17 @@ pub struct ResolvedVar {
     pub exists: bool,
 }
 
-/// Report how each configured root currently resolves, plus any `QL_*` variable
-/// that has no matching entry in the config.
+/// Report how each configured root currently resolves. Only names listed in
+/// config.roots are reported: the environment has hundreds of unrelated
+/// variables (PATH, APPDATA, …) and we cannot tell which ones are meant as
+/// launcher roots. A name present in config but shadowed by an env var shows
+/// its effective value and source.
 #[tauri::command]
 pub fn resolve_path_roots() -> Vec<ResolvedVar> {
     let mut names: Vec<String> = path_roots()
         .lock()
         .map(|g| g.keys().cloned().collect())
         .unwrap_or_default();
-
-    // Surface QL_* variables the config does not know about. Plain names are
-    // not enumerated: the environment has hundreds and we cannot tell which
-    // ones are meant as launcher roots.
-    for (key, _) in std::env::vars() {
-        let Some(stripped) = key.strip_prefix(ENV_PREFIX) else {
-            continue;
-        };
-        if stripped.is_empty() {
-            continue;
-        }
-        if !names.iter().any(|n| n.eq_ignore_ascii_case(stripped)) {
-            names.push(stripped.to_string());
-        }
-    }
     names.sort_by_key(|n| n.to_lowercase());
 
     names
@@ -274,9 +255,7 @@ pub fn resolve_path_roots() -> Vec<ResolvedVar> {
             let config_value = root_from_config(&name).and_then(non_empty);
             let (value, source) = resolved.unwrap_or_else(|| (String::new(), VarSource::Config));
             let overridden_value = match (&source, &config_value) {
-                (VarSource::EnvPrefixed | VarSource::Env, Some(cfg)) if *cfg != value => {
-                    Some(cfg.clone())
-                }
+                (VarSource::Env, Some(cfg)) if *cfg != value => Some(cfg.clone()),
                 _ => None,
             };
             let exists = !value.is_empty() && Path::new(&value).is_dir();
@@ -477,7 +456,7 @@ mod tests {
         set_path_roots(roots);
         assert_eq!(expand_vars(r"${QL_TEST_PROJ}\a"), r"I:\FromConfig\a");
 
-        // A pre-set machine-wide directory wins over the bundled default,
+        // A pre-set environment variable wins over the bundled default,
         // so one config.json can serve several machines unedited.
         std::env::set_var("QL_TEST_PROJ", r"E:\FromEnv");
         assert_eq!(expand_vars(r"${QL_TEST_PROJ}\a"), r"E:\FromEnv\a");
@@ -498,23 +477,6 @@ mod tests {
     }
 
     #[test]
-    fn prefixed_env_wins_over_plain_name() {
-        use super::{expand_vars, set_path_roots};
-        use std::collections::HashMap;
-
-        set_path_roots(HashMap::new());
-        std::env::set_var("TESTROOT", r"D:\plain");
-        assert_eq!(expand_vars(r"${TESTROOT}\x"), r"D:\plain\x");
-
-        // QL_ prefix is the escape hatch when a bare name is already taken
-        std::env::set_var("QL_TESTROOT", r"D:\prefixed");
-        assert_eq!(expand_vars(r"${TESTROOT}\x"), r"D:\prefixed\x");
-
-        std::env::remove_var("QL_TESTROOT");
-        std::env::remove_var("TESTROOT");
-    }
-
-    #[test]
     fn config_is_used_when_nothing_preset() {
         use super::{expand_vars, set_path_roots, VarSource};
         use std::collections::HashMap;
@@ -532,5 +494,17 @@ mod tests {
         assert_eq!(entry.source, VarSource::Config);
         assert!(entry.overridden_value.is_none());
         set_path_roots(HashMap::new());
+    }
+
+    #[test]
+    fn plain_env_var_works_without_config_entry() {
+        // ${APPDATA} etc. must keep working even with no config entry at all.
+        use super::{expand_vars, set_path_roots};
+        use std::collections::HashMap;
+
+        set_path_roots(HashMap::new());
+        std::env::set_var("QL_TEST_PLAIN_ENV", r"D:\viaenv");
+        assert_eq!(expand_vars(r"${QL_TEST_PLAIN_ENV}\x"), r"D:\viaenv\x");
+        std::env::remove_var("QL_TEST_PLAIN_ENV");
     }
 }

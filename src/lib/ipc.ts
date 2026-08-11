@@ -45,10 +45,10 @@ export async function setPathRootsBackend(
 }
 
 /**
- * 变量取值来源。环境变量优先于 config，因为这些根目录通常是机器上预设一次、
- * 与其他工具共用的；config.roots 只是自带默认值。
+ * 变量取值来源。环境变量优先于 config：这些根目录通常是机器上预设一次、
+ * 与其他工具共用的（bat 脚本里 %NAME% 也能用）；config.roots 只是未预设时的默认值。
  */
-export type VarSource = "envprefixed" | "env" | "config";
+export type VarSource = "env" | "config";
 
 export interface ResolvedVar {
   name: string;

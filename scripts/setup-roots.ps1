@@ -9,16 +9,11 @@
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts/setup-roots.ps1                 # preview
 #   powershell -ExecutionPolicy Bypass -File scripts/setup-roots.ps1 -Apply          # write
-#   powershell -ExecutionPolicy Bypass -File scripts/setup-roots.ps1 -Prefix -Apply  # write as QL_<NAME>
 #   powershell -ExecutionPolicy Bypass -File scripts/setup-roots.ps1 -Config D:\tools\QuickLauncher\config.json
-#
-# -Prefix is for names that would clash with an existing variable: QL_RED also
-# satisfies ${RED} and wins over a bare RED.
 
 param(
     [string]$Config,
-    [switch]$Apply,
-    [switch]$Prefix
+    [switch]$Apply
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,11 +41,10 @@ if (-not $cfg.roots) {
 
 $entries = @()
 foreach ($p in $cfg.roots.PSObject.Properties) {
-    $name = if ($Prefix) { "QL_$($p.Name)" } else { $p.Name }
     $entries += [pscustomobject]@{
-        Name     = $name
+        Name     = $p.Name
         Value    = $p.Value
-        Existing = [Environment]::GetEnvironmentVariable($name, "User")
+        Existing = [Environment]::GetEnvironmentVariable($p.Name, "User")
         OnDisk   = Test-Path -LiteralPath $p.Value
     }
 }
