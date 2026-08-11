@@ -52,7 +52,7 @@ export function useItemIcon(item: LaunchItem | undefined): string | null {
         if (!cancelled) setUrl(u);
         return;
       }
-      // resource：调后端从 dll/exe 提取
+      // resource：调后端从 dll/exe 提取（后端会展开 ${VAR}）
       if (item.iconMode === "resource" && item.iconPath) {
         const u = await extractIcon(item.iconPath, item.iconIndex || 0);
         cache.set(k, u);

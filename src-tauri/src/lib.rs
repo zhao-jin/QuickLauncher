@@ -231,6 +231,7 @@ pub fn run() {
             config_store::load_config,
             config_store::save_config,
             config_store::portable_dir_path,
+            config_store::set_path_roots,
             icon::extract_icon_to_png,
             icon::enumerate_resource_icons,
             icon::extract_resource_icons_range,

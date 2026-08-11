@@ -1,7 +1,15 @@
 import { create } from "zustand";
 import type { AppConfig, LaunchItem, Tab } from "@/types/config";
-import { loadConfigRaw, saveConfigRaw } from "@/lib/ipc";
-import { initPathBase } from "@/lib/pathUtil";
+import { loadConfigRaw, saveConfigRaw, setPathRootsBackend } from "@/lib/ipc";
+import { initPathBase, setPathRoots } from "@/lib/pathUtil";
+
+/** 把命名根目录同步给前端工具与后端解析器 */
+function syncRoots(roots: Record<string, string> | undefined) {
+  setPathRoots(roots);
+  setPathRootsBackend(roots ?? {}).catch((e) =>
+    console.error("set path roots failed", e)
+  );
+}
 
 /** 默认示例配置 */
 function makeDefaultConfig(): AppConfig {
@@ -28,6 +36,7 @@ function makeDefaultConfig(): AppConfig {
       hideAfterLaunch: true,
       autoStart: false,
     },
+    roots: {},
     topBar: [mkF("F1", "Explorer", "explorer.exe")],
     tabs: [demoRED, { id: "tab-tools", name: "Tools", items: [] }],
   };
@@ -124,13 +133,16 @@ export const useConfig = create<ConfigStore>((set, get) => ({
           layout: { ...def.layout, ...(parsed.layout ?? {}) },
           appearance: { ...def.appearance, ...(parsed.appearance ?? {}) },
           behavior: { ...def.behavior, ...(parsed.behavior ?? {}) },
+          roots: parsed.roots ?? def.roots,
           topBar: parsed.topBar ?? def.topBar,
           tabs: parsed.tabs ?? def.tabs,
         };
+        syncRoots(merged.roots);
         set({ config: merged, loaded: true });
       } else {
         // 不存在 → 用默认并立即写入
         const def = makeDefaultConfig();
+        syncRoots(def.roots);
         set({ config: def, loaded: true });
         await saveConfigRaw(JSON.stringify(def, null, 2)).catch((e) =>
           console.error("first save failed", e)
@@ -138,7 +150,9 @@ export const useConfig = create<ConfigStore>((set, get) => ({
       }
     } catch (e) {
       console.error("loadConfig failed, fallback to default", e);
-      set({ config: makeDefaultConfig(), loaded: true });
+      const def = makeDefaultConfig();
+      syncRoots(def.roots);
+      set({ config: def, loaded: true });
     }
   },
 
@@ -297,9 +311,10 @@ export const useConfig = create<ConfigStore>((set, get) => ({
     })),
 
   updateSettings: (next) =>
-    withSave(set, get, () => ({
-      config: next,
-    })),
+    withSave(set, get, () => {
+      syncRoots(next.roots);
+      return { config: next };
+    }),
 
   getActiveItemByKey: (key) => {
     const s = get();

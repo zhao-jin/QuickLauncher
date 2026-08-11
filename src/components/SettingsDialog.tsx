@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useConfig } from "@/store/useConfig";
-import { getPortableDir } from "@/lib/ipc";
+import { getPortableDir, pickFolder } from "@/lib/ipc";
 import type { AppConfig } from "@/types/config";
 
 interface Props {
@@ -148,6 +148,14 @@ export default function SettingsDialog({ onClose }: Props) {
             </div>
           </Section>
 
+          {/* 路径变量 */}
+          <Section title="路径变量">
+            <RootsEditor
+              roots={draft.roots ?? {}}
+              onChange={(v) => patch("roots", v)}
+            />
+          </Section>
+
           {/* 路径 */}
           <Section title="存储">
             <div className="text-xs text-white/55 break-all font-mono bg-white/5 rounded px-2 py-1.5 border border-white/10">
@@ -183,6 +191,115 @@ export default function SettingsDialog({ onClose }: Props) {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * 命名根目录编辑器。
+ *
+ * 内部用数组维护顺序与编辑中间态（允许暂时空名/重名），
+ * 每次变更折叠成 Record 抛给上层；空名行被忽略，重名后者生效并标红。
+ */
+function RootsEditor({
+  roots,
+  onChange,
+}: {
+  roots: Record<string, string>;
+  onChange: (v: Record<string, string>) => void;
+}) {
+  const [entries, setEntries] = useState<Array<[string, string]>>(() =>
+    Object.entries(roots)
+  );
+
+  const emit = (next: Array<[string, string]>) => {
+    setEntries(next);
+    const out: Record<string, string> = {};
+    for (const [name, value] of next) {
+      const key = name.trim();
+      if (key) out[key] = value.trim();
+    }
+    onChange(out);
+  };
+
+  const setAt = (index: number, name: string, value: string) =>
+    emit(entries.map((e, i) => (i === index ? [name, value] : e)));
+
+  const nameCounts = new Map<string, number>();
+  for (const [name] of entries) {
+    const key = name.trim().toLowerCase();
+    if (key) nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+  }
+
+  return (
+    <>
+      <div className="text-[11px] text-white/45">
+        给常用根目录起名，条目路径里用 <code className="text-white/70">{"${名字}"}</code>{" "}
+        引用。换机器只改这里，跨盘符也适用。
+      </div>
+
+      {entries.length === 0 && (
+        <div className="text-xs text-white/35 py-1">尚未定义任何变量。</div>
+      )}
+
+      <div className="space-y-1.5">
+        {entries.map(([name, value], index) => {
+          const trimmed = name.trim();
+          const duplicated = (nameCounts.get(trimmed.toLowerCase()) ?? 0) > 1;
+          const badName = trimmed !== "" && !/^[A-Za-z0-9_-]+$/.test(trimmed);
+          return (
+            <div key={index} className="flex items-center gap-1.5">
+              <input
+                className={`w-28 shrink-0 bg-black/40 border rounded px-2 py-1 font-mono text-xs outline-none focus:border-blue-400/60 ${
+                  duplicated || badName ? "border-amber-400/70" : "border-white/15"
+                }`}
+                value={name}
+                spellCheck={false}
+                placeholder="名字"
+                title={
+                  duplicated
+                    ? "名字重复，后面的会覆盖前面的"
+                    : badName
+                      ? "只允许字母、数字、下划线和连字符"
+                      : ""
+                }
+                onChange={(e) => setAt(index, e.target.value, value)}
+              />
+              <input
+                className="flex-1 min-w-0 bg-black/40 border border-white/15 rounded px-2 py-1 font-mono text-xs outline-none focus:border-blue-400/60"
+                value={value}
+                spellCheck={false}
+                placeholder="目标目录，如 I:\RED"
+                onChange={(e) => setAt(index, name, e.target.value)}
+              />
+              <button
+                className="px-2 py-1 text-xs bg-white/10 hover:bg-white/15 rounded shrink-0"
+                title="选择目录"
+                onClick={async () => {
+                  const picked = await pickFolder();
+                  if (picked) setAt(index, name, picked);
+                }}
+              >
+                ...
+              </button>
+              <button
+                className="w-6 h-6 rounded text-red-400 hover:bg-red-500/15 shrink-0"
+                title="删除"
+                onClick={() => emit(entries.filter((_, i) => i !== index))}
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        className="px-2.5 py-1 text-xs bg-white/10 hover:bg-white/15 rounded"
+        onClick={() => emit([...entries, ["", ""]])}
+      >
+        + 添加变量
+      </button>
+    </>
   );
 }
 

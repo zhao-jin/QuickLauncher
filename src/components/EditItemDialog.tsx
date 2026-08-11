@@ -3,10 +3,14 @@ import type { LaunchItem, RunMode } from "@/types/config";
 import { pickExeFile, pickFolder, pickIcon } from "@/lib/ipc";
 import {
   canRelativize,
+  canUseVar,
   getPathBase,
+  hasVars,
   isRelativePath,
   toAbsolutePath,
   toRelativePath,
+  toVarPath,
+  unresolvedVars,
 } from "@/lib/pathUtil";
 import { useItemIcon } from "@/lib/useIcon";
 import IconPickerDialog from "@/components/IconPickerDialog";
@@ -263,16 +267,25 @@ function FilePane({
       </Row>
 
       <div className="text-xs text-white/50 pt-1">
-        提示：相对路径以 exe 所在目录为基准（<code>./tools/x.exe</code>、
-        <code>../shared/y.exe</code>），便于整包拷到其他机器。
+        提示：<code>${"{RED}"}\x</code> 引用设置里的命名根目录（跨盘符可用）；
+        <code>.\x</code>、<code>..\x</code> 相对 exe 所在目录。
       </div>
     </>
   );
 }
 
-/** 相对路径时在下方补一行解析后的绝对路径 */
+/** 变量/相对路径时在下方补一行展开后的绝对路径，未定义变量则告警 */
 function PathHint({ value }: { value: string }) {
-  if (!isRelativePath(value)) return null;
+  const missing = unresolvedVars(value);
+  if (missing.length > 0) {
+    return (
+      <div className="-mt-1.5 pl-[88px] text-[11px] font-mono text-amber-300/90 break-all">
+        未定义变量：{missing.map((n) => `\${${n}}`).join(", ")}
+        <span className="text-white/40">（在 设置 → 路径变量 中添加）</span>
+      </div>
+    );
+  }
+  if (!hasVars(value) && !isRelativePath(value)) return null;
   return (
     <div className="-mt-1.5 pl-[88px] text-[11px] font-mono text-white/45 break-all">
       → {toAbsolutePath(value)}
@@ -280,7 +293,7 @@ function PathHint({ value }: { value: string }) {
   );
 }
 
-/** 绝对路径 ⇄ 相对路径切换 */
+/** 绝对 / 相对 / 变量 三种写法之间切换 */
 function RelBtn({
   value,
   onChange,
@@ -288,21 +301,58 @@ function RelBtn({
   value: string;
   onChange: (v: string) => void;
 }) {
-  const rel = isRelativePath(value);
-  const canRel = canRelativize(value);
-  if (!rel && !canRel) return null;
+  const usesVar = hasVars(value);
+  const rel = !usesVar && isRelativePath(value);
+  const base = getPathBase();
+
+  // 已经是变量写法 → 只提供还原为绝对路径
+  if (usesVar) {
+    return (
+      <button
+        className="px-2 py-1 text-xs bg-white/10 hover:bg-white/15 rounded shrink-0"
+        title="展开变量，转为绝对路径"
+        onClick={() => onChange(toAbsolutePath(value))}
+      >
+        → 绝对
+      </button>
+    );
+  }
+  if (rel) {
+    return (
+      <button
+        className="px-2 py-1 text-xs bg-white/10 hover:bg-white/15 rounded shrink-0"
+        title={`转为绝对路径\n基准：${base}`}
+        onClick={() => onChange(toAbsolutePath(value))}
+      >
+        → 绝对
+      </button>
+    );
+  }
+
+  const varForm = canUseVar(value);
+  const relForm = canRelativize(value);
+  if (!varForm && !relForm) return null;
   return (
-    <button
-      className="px-2 py-1 text-xs bg-white/10 hover:bg-white/15 rounded shrink-0"
-      title={
-        rel
-          ? `转为绝对路径\n基准：${getPathBase()}`
-          : `转为相对路径（相对 exe 目录）\n基准：${getPathBase()}`
-      }
-      onClick={() => onChange(rel ? toAbsolutePath(value) : toRelativePath(value))}
-    >
-      {rel ? "→ 绝对" : "→ 相对"}
-    </button>
+    <>
+      {varForm && (
+        <button
+          className="px-2 py-1 text-xs bg-blue-500/25 hover:bg-blue-500/40 rounded shrink-0"
+          title={`用命名根目录替换：${toVarPath(value)}`}
+          onClick={() => onChange(toVarPath(value))}
+        >
+          → 变量
+        </button>
+      )}
+      {relForm && (
+        <button
+          className="px-2 py-1 text-xs bg-white/10 hover:bg-white/15 rounded shrink-0"
+          title={`转为相对路径（相对 exe 目录）\n基准：${base}`}
+          onClick={() => onChange(toRelativePath(value))}
+        >
+          → 相对
+        </button>
+      )}
+    </>
   );
 }
 
@@ -386,11 +436,7 @@ function AppearancePane({
                 <div className="font-mono text-white/65 break-all">
                   {draft.iconPath || "<未选择>"}
                 </div>
-                {isRelativePath(draft.iconPath) && (
-                  <div className="font-mono text-white/45 break-all">
-                    → {toAbsolutePath(draft.iconPath)}
-                  </div>
-                )}
+                <IconPathHint value={draft.iconPath} />
               </>
             )}
             {isResource && (
@@ -400,11 +446,7 @@ function AppearancePane({
                   {draft.iconPath || "<未选择>"}{" "}
                   <span className="text-blue-300">#{draft.iconIndex || 0}</span>
                 </div>
-                {isRelativePath(draft.iconPath) && (
-                  <div className="font-mono text-white/45 break-all">
-                    → {toAbsolutePath(draft.iconPath)}
-                  </div>
-                )}
+                <IconPathHint value={draft.iconPath} />
               </>
             )}
           </div>
@@ -435,6 +477,25 @@ function AppearancePane({
         />
       )}
     </>
+  );
+}
+
+/** 图标路径的展开提示（缩进与图标面板对齐，不用 PathHint 的左边距） */
+function IconPathHint({ value }: { value: string }) {
+  if (!value) return null;
+  const missing = unresolvedVars(value);
+  if (missing.length > 0) {
+    return (
+      <div className="font-mono text-amber-300/90 break-all">
+        未定义变量：{missing.map((n) => `\${${n}}`).join(", ")}
+      </div>
+    );
+  }
+  if (!hasVars(value) && !isRelativePath(value)) return null;
+  return (
+    <div className="font-mono text-white/45 break-all">
+      → {toAbsolutePath(value)}
+    </div>
   );
 }
 

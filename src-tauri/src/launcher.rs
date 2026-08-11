@@ -106,11 +106,23 @@ mod win {
     }
 
     pub fn execute(item: &LaunchItem) -> Result<(), String> {
+        // Undefined ${VAR} would otherwise produce a nonsensical path
+        let missing = crate::config_store::unresolved_vars(&item.target);
+        if !missing.is_empty() {
+            return Err(format!(
+                "未定义的路径变量: {}\n  target = {}\n请在 设置 → 路径变量 中添加",
+                missing.join(", "),
+                item.target
+            ));
+        }
+
         let target = normalize_target(&item.target);
         let workdir = infer_workdir(item, &target);
 
+        // Expand args too, so things like ${RED}\excel can be passed through
+        let arguments = crate::config_store::expand_vars(&item.arguments);
         let file_w = to_wide(&target);
-        let params_w = to_wide(&item.arguments);
+        let params_w = to_wide(&arguments);
         let dir_w = to_wide(&workdir);
         let verb_w = to_wide("runas");
 
@@ -123,7 +135,7 @@ mod win {
             std::ptr::null()
         };
         info.lpFile = file_w.as_ptr();
-        info.lpParameters = if item.arguments.is_empty() {
+        info.lpParameters = if arguments.is_empty() {
             std::ptr::null()
         } else {
             params_w.as_ptr()
@@ -142,7 +154,7 @@ mod win {
             return Err(format!(
                 "启动失败: {err}\n  target = {target}\n  args = {args}\n  workdir = {workdir}",
                 target = target,
-                args = item.arguments,
+                args = arguments,
                 workdir = if workdir.is_empty() { "<默认>".to_string() } else { workdir.clone() }
             ));
         }

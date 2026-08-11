@@ -6,8 +6,10 @@
 //!
 //! 前端完全掌控"要保存什么"——Rust 端不解析内容，只负责序列化后的字符串读写。
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 /// 计算 Portable 目录。
 ///
@@ -147,7 +149,98 @@ fn is_bare_command(t: &str) -> bool {
     !t.contains(std::path::MAIN_SEPARATOR) && !t.contains('/') && t != "." && t != ".."
 }
 
+/// Named root directories (e.g. `RED` → `I:\RED`), pushed in by the frontend
+/// after it loads `config.json`. Keeping them here means Rust never has to
+/// parse the config structure itself.
+static PATH_ROOTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+fn path_roots() -> &'static Mutex<HashMap<String, String>> {
+    PATH_ROOTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Tauri command: replace the named-root table.
+#[tauri::command]
+pub fn set_path_roots(roots: HashMap<String, String>) {
+    if let Ok(mut guard) = path_roots().lock() {
+        *guard = roots;
+    }
+}
+
+/// Max substitution passes, so a root referring to itself cannot hang us.
+const MAX_EXPAND_PASSES: usize = 8;
+
+/// Look up a variable: config roots first, then process environment.
+fn lookup_var(name: &str) -> Option<String> {
+    if let Ok(guard) = path_roots().lock() {
+        // Case-insensitive match, matching Windows path conventions.
+        if let Some(v) = guard.get(name) {
+            return Some(v.clone());
+        }
+        for (k, v) in guard.iter() {
+            if k.eq_ignore_ascii_case(name) {
+                return Some(v.clone());
+            }
+        }
+    }
+    std::env::var(name).ok()
+}
+
+/// Expand `${NAME}` references. Unknown names are left verbatim so callers can
+/// surface a useful error instead of silently building a wrong path.
+pub fn expand_vars(input: &str) -> String {
+    let mut current = input.to_string();
+    for _ in 0..MAX_EXPAND_PASSES {
+        if !current.contains("${") {
+            break;
+        }
+        let mut out = String::with_capacity(current.len());
+        let mut rest = current.as_str();
+        let mut changed = false;
+        while let Some(start) = rest.find("${") {
+            let Some(end_rel) = rest[start + 2..].find('}') else {
+                break;
+            };
+            let end = start + 2 + end_rel;
+            let name = &rest[start + 2..end];
+            out.push_str(&rest[..start]);
+            match lookup_var(name.trim()) {
+                Some(value) => {
+                    out.push_str(value.trim_end_matches(['\\', '/']));
+                    changed = true;
+                }
+                None => out.push_str(&rest[start..=end]),
+            }
+            rest = &rest[end + 1..];
+        }
+        out.push_str(rest);
+        current = out;
+        if !changed {
+            break;
+        }
+    }
+    current
+}
+
+/// Names still unresolved after expansion (i.e. undefined variables).
+pub fn unresolved_vars(input: &str) -> Vec<String> {
+    let expanded = expand_vars(input);
+    let mut names = Vec::new();
+    let mut rest = expanded.as_str();
+    while let Some(start) = rest.find("${") {
+        let Some(end_rel) = rest[start + 2..].find('}') else {
+            break;
+        };
+        let end = start + 2 + end_rel;
+        names.push(rest[start + 2..end].trim().to_string());
+        rest = &rest[end + 1..];
+    }
+    names
+}
+
 /// Normalize a path for portable use.
+///
+/// Order matters: `${VAR}` is expanded first, because only afterwards can we
+/// tell whether the result is absolute (`${RED}\x` → `I:\RED\x`) or relative.
 ///
 /// - URL (http/https/file) → unchanged
 /// - bare command name (no path separator) → unchanged (Shell finds it via PATH)
@@ -155,11 +248,12 @@ fn is_bare_command(t: &str) -> bool {
 /// - relative path (contains a separator, or is `.`/`..`) → resolved against
 ///   the portable dir
 ///
-/// This lets `config.json` use paths like `./tools/foo.exe` or `../shared/bar.exe`
-/// so the whole folder can be copied to another machine and still work,
-/// regardless of the process working directory.
+/// This lets `config.json` use paths like `./tools/foo.exe`, `../shared/bar.exe`
+/// or `${RED}/mtool/m.py` so the whole folder can be copied to another machine
+/// and still work, regardless of the process working directory.
 pub fn normalize_path(p: &str) -> String {
-    let t = p.trim();
+    let expanded = expand_vars(p.trim());
+    let t = expanded.trim();
     if t.starts_with("http://") || t.starts_with("https://") || t.starts_with("file://") {
         return t.to_string();
     }
@@ -178,7 +272,8 @@ pub fn normalize_path(p: &str) -> String {
 /// Resolve a directory path. Unlike `normalize_path` there is no PATH-lookup
 /// semantics, so a bare name like `tools` is relative to the portable dir.
 pub fn resolve_dir(p: &str) -> PathBuf {
-    let path = Path::new(p.trim());
+    let expanded = expand_vars(p.trim());
+    let path = Path::new(expanded.trim());
     let joined = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -224,5 +319,45 @@ mod tests {
         assert!(!is_bare_command(".."));
         assert!(!is_bare_command(r".\tools\x.exe"));
         assert!(!is_bare_command("tools/x.exe"));
+    }
+
+    #[test]
+    fn expands_named_roots() {
+        use super::{expand_vars, set_path_roots, unresolved_vars};
+        use std::collections::HashMap;
+
+        let mut roots = HashMap::new();
+        roots.insert("RED".to_string(), r"I:\RED".to_string());
+        roots.insert("Self".to_string(), r"E:\self\".to_string());
+        set_path_roots(roots);
+
+        assert_eq!(expand_vars(r"${RED}\mtool\m.py"), r"I:\RED\mtool\m.py");
+        // trailing separator in the root must not double up
+        assert_eq!(expand_vars(r"${Self}\bats\x.bat"), r"E:\self\bats\x.bat");
+        // case-insensitive, like Windows paths
+        assert_eq!(expand_vars(r"${red}\a"), r"I:\RED\a");
+        // multiple refs in one string
+        assert_eq!(expand_vars(r"${RED}\a ${Self}\b"), r"I:\RED\a E:\self\b");
+        // unknown names survive verbatim and are reported
+        assert_eq!(expand_vars(r"${NOPE}\a"), r"${NOPE}\a");
+        assert_eq!(unresolved_vars(r"${NOPE}\a"), vec!["NOPE".to_string()]);
+        assert!(unresolved_vars(r"${RED}\a").is_empty());
+        // unterminated brace must not panic or loop
+        assert_eq!(expand_vars("${RED"), "${RED");
+
+        set_path_roots(HashMap::new());
+    }
+
+    #[test]
+    fn self_referencing_root_terminates() {
+        use super::{expand_vars, set_path_roots};
+        use std::collections::HashMap;
+
+        let mut roots = HashMap::new();
+        roots.insert("LOOP".to_string(), "${LOOP}/x".to_string());
+        set_path_roots(roots);
+        // Must return rather than hang; exact value is unimportant.
+        let _ = expand_vars("${LOOP}/a");
+        set_path_roots(HashMap::new());
     }
 }

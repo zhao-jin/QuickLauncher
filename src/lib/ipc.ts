@@ -37,6 +37,13 @@ export async function getPortableDir(): Promise<string> {
   return await invoke<string>("portable_dir_path");
 }
 
+/** 把命名根目录表同步给后端（启动项路径里的 ${NAME} 由后端展开） */
+export async function setPathRootsBackend(
+  roots: Record<string, string>
+): Promise<void> {
+  await invoke("set_path_roots", { roots });
+}
+
 /** 彻底退出进程（绕过 CloseRequested 的 hide 拦截） */
 export async function quitApp(): Promise<void> {
   await invoke("quit_app");

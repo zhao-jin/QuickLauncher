@@ -6,7 +6,7 @@ import { launchItem, revealInExplorer } from "@/lib/ipc";
 import { emptyItem, type LaunchItem } from "@/types/config";
 import { keyFromEvent, makeKeyMatrix, TOP_BAR_KEYS } from "@/lib/hotkey";
 import { useItemIcon } from "@/lib/useIcon";
-import { isRelativePath, toAbsolutePath } from "@/lib/pathUtil";
+import { isRelativePath, hasVars, toAbsolutePath } from "@/lib/pathUtil";
 import EditItemDialog from "@/components/EditItemDialog";
 import SettingsDialog from "@/components/SettingsDialog";
 import ContextMenu, { type ContextMenuItem } from "@/components/ContextMenu";
@@ -651,10 +651,12 @@ function baseName(path: string): string {
 function buildTooltip(hotkey: string, item: LaunchItem): string {
   const lines: string[] = [];
   const INDENT = " ".repeat(11);
-  /** 相对路径追加一行解析后的绝对路径 */
+  /** 变量或相对路径时追加一行解析后的绝对路径 */
   const pushPath = (label: string, value: string) => {
     lines.push(`${label}${value}`);
-    if (isRelativePath(value)) lines.push(`${INDENT}→ ${toAbsolutePath(value)}`);
+    if (hasVars(value) || isRelativePath(value)) {
+      lines.push(`${INDENT}→ ${toAbsolutePath(value)}`);
+    }
   };
 
   lines.push(`[${hotkey}] ${item.name || "(未命名)"}`);

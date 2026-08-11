@@ -75,6 +75,11 @@ export interface AppConfig {
   layout: Layout;
   appearance: AppearanceConfig;
   behavior: Behavior;
+  /**
+   * 命名根目录，如 `{ RED: "I:\\RED" }`，条目里用 `${RED}\mtool` 引用。
+   * 换机器只改这里，跨盘符也适用。
+   */
+  roots?: Record<string, string>;
   topBar: LaunchItem[];
   tabs: Tab[];
 }
